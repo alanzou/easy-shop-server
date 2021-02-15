@@ -4,6 +4,8 @@ const { Category } = require('../models/category');
 const router = express.Router();
 const mongoose = require('mongoose');
 const multer = require('multer');
+const aws = require('aws-sdk');
+const multerS3 = require('multer-s3');
 
 const FILE_TYPE_MAP = {
     'image/png': 'png',
@@ -11,24 +13,28 @@ const FILE_TYPE_MAP = {
     'image/jpg': 'jpg',
 };
 
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        const isValid = FILE_TYPE_MAP[file.mimetype];
-        let uploadError = new Error('invalid image type');
+const s3 = new aws.S3();
+aws.config.update({
+    secretAccessKey: process.env.SECRETACCESSKEY,
+    accessKeyId: process.env.ACCESSKEYID,
+    region: process.env.REGION,
+});
 
-        if (isValid) {
-            uploadError = null;
-        }
-        cb(uploadError, 'public/uploads');
+const s3_storage = multerS3({
+    acl: 'public-read',
+    s3,
+    bucket: process.env.BUCKET_NAME,
+    metadata: function (req, file, cb) {
+        cb(null, { fieldName: 'TESTING_METADATA' });
     },
-    filename: function (req, file, cb) {
+    key: function (req, file, cb) {
         const fileName = file.originalname.split(' ').join('-');
         const extension = FILE_TYPE_MAP[file.mimetype];
         cb(null, `${fileName}-${Date.now()}.${extension}`);
     },
 });
 
-const uploadOptions = multer({ storage: storage });
+const uploadOptions = multer({ storage: s3_storage });
 
 router.get(`/`, async (req, res) => {
     let filter = {};
@@ -57,11 +63,14 @@ router.post(`/`, uploadOptions.single('image'), async (req, res) => {
     const category = await Category.findById(req.body.category);
     if (!category) return res.status(400).send('Invalid Category');
 
+    const file = req.file;
+    if (!file) return res.status(400).send('No image in the request');
+
     let product = new Product({
         name: req.body.name,
         description: req.body.description,
         richDescription: req.body.richDescription,
-        image: req.body.image,
+        image: `${file.location}`,
         brand: req.body.brand,
         price: req.body.price,
         category: req.body.category,
@@ -112,12 +121,10 @@ router.delete('/:id', (req, res) => {
     Product.findByIdAndRemove(req.params.id)
         .then((product) => {
             if (product) {
-                return res
-                    .status(200)
-                    .json({
-                        success: true,
-                        message: 'the product is deleted!',
-                    });
+                return res.status(200).json({
+                    success: true,
+                    message: 'the product is deleted!',
+                });
             } else {
                 return res
                     .status(404)
